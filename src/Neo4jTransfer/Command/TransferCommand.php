@@ -39,6 +39,11 @@ class TransferCommand extends BaseCommand
             $transactional, $ignoredRelationProperties
             ) = DumpCommand::makeReadArguments($input);
         list($target) = ImportCommand::makeWriteArguments($input);
+        if (!isset($file)) {
+            $file = sprintf('dump-%s-%s.cypher', $source->getHost(), date('Ymd-His'));
+            $output->writeln('No output file specified. Will use: ');
+            $output->writeln($file."\n");
+        }
         if (isset($file)) {
             $file = fopen($file, 'w+');
         }
