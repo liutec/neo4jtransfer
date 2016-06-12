@@ -2,4 +2,4 @@
 vendor/
 composer.lock
 neo4jtransfer.phar
-*.txt
+*.cypher

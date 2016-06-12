@@ -8,6 +8,7 @@ use Symfony\Component\Console\Command\Command as BaseCommand;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Tests\Fixtures\DummyOutput;
 
 class ImportCommand extends BaseCommand
 {
@@ -24,7 +25,7 @@ class ImportCommand extends BaseCommand
         ;
 
         static::configureTargetConnectionOptions($command);
-        $command->addOption('input', null, InputArgument::OPTIONAL, 'Input filename');
+        $command->addOption('input', null, InputArgument::OPTIONAL, 'Input filename (set to \'last:[hostname]\' to use dump-[hostname]-[latest timestamp].cypher)');
     }
     
     public static function configureTargetConnectionOptions(BaseCommand $command)
@@ -61,6 +62,30 @@ class ImportCommand extends BaseCommand
     {
         list($target) = static::makeWriteArguments($input);
         $file = Neo4jTransfer::getWithDefault($input->getOptions(), 'input', null);
+        if (isset($file)) {
+            if (substr($file, 0, 5) == 'last:') {
+                $hostname = substr($file, 5);
+                $findFile = DumpCommand::makeDumpFileName($hostname, null, '*-*');
+                $file = null;
+                $timestamp = null;
+                $from = strpos($findFile, '*');
+                $rTo = strrpos($findFile, '*')-strlen($findFile)+1;
+                foreach (glob($findFile) as $filename) {
+                    $ft = substr($filename, $from, $rTo);
+                    if ((!isset($timestamp)) || ($ft > $timestamp)) {
+                        $file = $filename;
+                        $timestamp = $ft;
+                    }
+                }
+                if (isset($file)) {
+                    $output->writeln(sprintf("Importing from the latest dump for '%s':", $hostname));
+                    $output->writeln($file."\n");
+                } else {
+                    $output->writeln(sprintf("Unable to find the latest dump for '%s'.", $hostname));
+                    exit(1);
+                }
+            }
+        }
         if (isset($file)) {
             $file = fopen($file, 'r');
         }

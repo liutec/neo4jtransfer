@@ -39,7 +39,7 @@ class DumpCommand extends BaseCommand
     
     public static function configureOutputOptions(BaseCommand $command)
     {
-        $command->addOption('output', null, InputArgument::OPTIONAL, 'Output filename');
+        $command->addOption('output', null, InputArgument::OPTIONAL, 'Output filename (set to \'default\' to use dump-[source-host]-[timestamp].cypher)');
         $command->addOption('clean', null, InputArgument::OPTIONAL, 'Clean target database before importing.');
         $command->addOption('import-label', null, InputArgument::OPTIONAL, 'The name of the label set on imported nodes.');
         $command->addOption('import-id-key', null, InputArgument::OPTIONAL, 'The name of the key used to hold the node IDs as imported.');
@@ -55,6 +55,19 @@ class DumpCommand extends BaseCommand
             Neo4jTransfer::getWithDefault($args, 'source-user', 'neo4j'),
             Neo4jTransfer::getWithDefault($args, 'source-password', 'neo4j')
         );
+    }
+
+    public static function makeDumpFileName($sourceHost, OutputInterface $output=null, $timestamp=null)
+    {
+        if (!isset($timestamp)) {
+            $timestamp = date('Ymd-His');
+        }
+        $file = sprintf('dump-%s-%s.cypher', $sourceHost, $timestamp);
+        if (isset($output)) {
+            $output->writeln('Using default output file: ');
+            $output->writeln($file."\n");
+        }
+        return $file;
     }
     
     public static function makeReadArguments(InputInterface $input)
@@ -86,6 +99,9 @@ class DumpCommand extends BaseCommand
             $source, $importLabel, $importIdKey, $readBatchSize, $nodeBatchSize, $relationBatchSize, $file, $clean, 
             $transactional, $ignoredRelationProperties
             ) = static::makeReadArguments($input);
+        if (isset($file) && ($file == 'default')) {
+            $file = static::makeDumpFileName($source->getHost(), $output);
+        }
         if (isset($file)) {
             $file = fopen($file, 'w+');
         }
