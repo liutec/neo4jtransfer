@@ -14,7 +14,7 @@ class TransferCommand extends BaseCommand
         static::configureTransfer($this);
     }
 
-    public static function configureTransfer(BaseCommand $command, $name='transfer')
+    public static function configureTransfer(BaseCommand $command, $name='transfer', $output=true)
     {
         $command
             ->setName($name)
@@ -22,9 +22,10 @@ class TransferCommand extends BaseCommand
         ;
 
         DumpCommand::configureSourceConnectionOptions($command);
-        DumpCommand::configureOutputOptions($command);
+        if ($output) {
+            DumpCommand::configureOutputOptions($command);
+        }
         ImportCommand::configureTargetConnectionOptions($command);
-        DumpCommand::configureOutputOptions($command);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output)
@@ -40,7 +41,7 @@ class TransferCommand extends BaseCommand
             ) = DumpCommand::makeReadArguments($input);
         list($target) = ImportCommand::makeWriteArguments($input);
         if ((!isset($file)) || ($file == 'default')) {
-            $file = DumpCommand::makeDumpFileName($source, $output);
+            $file = DumpCommand::makeDumpFileName($source->getHost(), $output);
         }
         if (isset($file)) {
             $file = fopen($file, 'w+');

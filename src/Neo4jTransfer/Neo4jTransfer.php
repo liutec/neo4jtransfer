@@ -2,8 +2,12 @@
 
 namespace Neo4jTransfer;
 
+use Everyman\Neo4j\Batch;
 use Everyman\Neo4j\Client;
 use Everyman\Neo4j\Cypher\Query;
+use Everyman\Neo4j\Label;
+use Everyman\Neo4j\Node;
+use Everyman\Neo4j\Relationship;
 use Symfony\Component\Console\Output\Output;
 use Symfony\Component\Console\Output\OutputInterface;
 
@@ -11,7 +15,9 @@ class Neo4jTransfer
 {
     const VERSION = '@version@';
     const RELEASE_DATE = '@release_date@';
-    const SEP_SIZE = 60;
+    const SEP_SIZE = 50;
+    const CYPHER_REMOVE_ALL_RELATIONS = 'MATCH ()-[r]->() DELETE r;';
+    const CYPHER_REMOVE_ALL_NODES = 'MATCH (n) DELETE n;';
 
     public static function getWithDefault($array, $key, $defaultValue = null)
     {
@@ -59,7 +65,7 @@ class Neo4jTransfer
 
     protected static function readRelationStats(Client $client)
     {
-        $cqCountRelations = 'MATCH ()-[r]-() RETURN count(r), min(id(r)), max(id(r));';
+        $cqCountRelations = 'MATCH ()-[r]->() RETURN count(r), min(id(r)), max(id(r));';
         $query = new Query($client, $cqCountRelations);
         $resultSet = $query->getResultSet();
         return $resultSet[0];
@@ -151,14 +157,14 @@ class Neo4jTransfer
         return $createCypher;
     }
 
-    protected static function makeRelationCypher($type, $properties, $leftNodeId, $rightNodeId, $ignoreProperties=null)
+    protected static function makeRelationCypher($type, $properties, $leftNodeVar, $rightNodeVar, $ignoreProperties=null)
     {
         $createCypher = sprintf(
-            '_%d-[:`%s`%s]->_%d',
-            $leftNodeId,
+            '%s-[:`%s`%s]->%s',
+            $leftNodeVar,
             static::escapeString($type),
             static::encodeProperties($properties, $ignoreProperties),
-            $rightNodeId
+            $rightNodeVar
         );
         return $createCypher;
     }
@@ -200,23 +206,46 @@ class Neo4jTransfer
         return intval($id);
     }
 
+    protected static function encodeNodeVar($id)
+    {
+        return '_'.$id;
+    }
+
+    protected static function getNodeVar($nodeId, &$nodeVars, &$lastNodeVar)
+    {
+        if (!isset($nodeVars[$nodeId])) {
+            $nodeVars[$nodeId] = $lastNodeVar;
+            $lastNodeVar++;
+        }
+        return static::encodeNodeVar($nodeVars[$nodeId]);
+    }
+
     protected static function makeRelationCyphers($resultSet, $importLabel, $importIdKey, $ignoreProperties=null, $nodePrefix='', $nodeSuffix='')
     {
         $result = array('match' => array(), 'create' => array());
         $id = null;
+        $lastNodeVar = 0;
+        $nodeVars = array();
         foreach ($resultSet as $row) {
             $id = $row[0]['metadata']['id'];
             $type = $row[0]['type'];
             $properties = $row[0]['data'];
             $leftNodeId = static::extractIdFromUrl($row[0]['start']);
             $rightNodeId = static::extractIdFromUrl($row[0]['end']);
-            $matchLeft = sprintf('(_%d:`%s`{`%s`:%d})', $leftNodeId, $importLabel, $importIdKey, $leftNodeId);
-            $matchRight = sprintf('(_%d:`%s`{`%s`:%d})', $rightNodeId, $importLabel, $importIdKey, $rightNodeId);
+            $leftNodeVar = static::getNodeVar($leftNodeId, $nodeVars, $lastNodeVar);
+            $rightNodeVar = static::getNodeVar($rightNodeId, $nodeVars, $lastNodeVar);
+            $matchLeft = sprintf('(%s:`%s`{`%s`:%d})', $leftNodeVar, $importLabel, $importIdKey, $leftNodeId);
+            $matchRight = sprintf('(%s:`%s`{`%s`:%d})', $rightNodeVar, $importLabel, $importIdKey, $rightNodeId);
             $result['match'][$matchLeft] = $matchLeft;
             $result['match'][$matchRight] = $matchRight;
-            $result['create'][] = $nodePrefix.static::makeRelationCypher($type, $properties, $leftNodeId, $rightNodeId, $ignoreProperties).$nodeSuffix;
+            $result['create'][] = $nodePrefix.static::makeRelationCypher($type, $properties, $leftNodeVar, $rightNodeVar, $ignoreProperties).$nodeSuffix;
         }
         return array($result, isset($id) ? $id + 1 : null);
+    }
+
+    protected static function getRemoveAllRelationsCypher()
+    {
+        return '';
     }
 
     public static function dump(Neo4jConnection $source, $importLabel, $importIdKey, $readBatchSize,
@@ -231,31 +260,33 @@ class Neo4jTransfer
         }
         $sepSize = self::SEP_SIZE;
         $client = $source->makeClient();
-        static::writelnInfo(sprintf('Source: %s@%s:%d', $source->getUsername(), $source->getHost(), $source->getPort()), $output, $stdout);
+        static::writelnInfo(sprintf('Reading from:        %s:%d', $source->getHost(), $source->getPort()), $output, $stdout);
+        static::writelnInfo(sprintf('Read batch size:     %d', $readBatchSize), $output, $stdout);
         static::sepInfo($sepSize, $output, $stdout);
         list($nodeCount, $minNodeId, $maxNodeId) = static::readNodeStats($client);
         static::writelnInfo(sprintf('Number of nodes:     %d [%d->%d]', $nodeCount, $minNodeId, $maxNodeId), $output, $stdout);
         list($relationCount, $minRelationId, $maxRelationId) = static::readRelationStats($client);
         static::writelnInfo(sprintf('Number of relations: %d [%d->%d]', $relationCount, $minRelationId, $maxRelationId), $output, $stdout);
         static::sepInfo($sepSize, $output, $stdout);
-        fwrite($file, sprintf("//\n// CYPHER DUMP OF NEO4J DATABASE\n// FROM %s:%d TAKEN AT %s\n", $source->getHost(), $source->getPort(), date('Y-m-d H:i:s')));
+        fwrite($file, sprintf("//\n// CYPHER DUMP OF NEO4J DATABASE\n// host: %s:%d\n// time: %s\n//\n// https://github.com/liutec/neo4jtransfer\n//\n", $source->getHost(), $source->getPort(), date('Y-m-d H:i:s')));
+        fwrite($file, "\n// CREATE IMPORT PROPERTY INDEX\n");
         fwrite($file, sprintf("CREATE INDEX ON :`%s`(`%s`);\n", $importLabel, $importIdKey));
         if ($transactional) {
-            fwrite($file, "// BEGIN TRANSACTION\n");
+            fwrite($file, "\n// BEGIN TRANSACTION\n");
             fwrite($file, "BEGIN\n");
         }
         if ($clean) {
-            fwrite($file, "// REMOVE NODES AND RELATIONS\n");
-            fwrite($file, "MATCH ()-[r]-() DELETE r;\n");
-            fwrite($file, "MATCH (n) DELETE n;\n");
+            fwrite($file, "\n// REMOVE ALL RELATIONS AND NODES\n");
+            fwrite($file, self::CYPHER_REMOVE_ALL_RELATIONS."\n");
+            fwrite($file, self::CYPHER_REMOVE_ALL_NODES."\n");
         }
         if ($stdout) {
             static::writelnInfo('Nodes', $output, $stdout);
             static::sepInfo($sepSize, $output, $stdout);
         } else {
-            static::writelnInfo(sprintf('Dumping nodes:       %d batches', ceil($nodeCount / $nodeBatchSize)), $output, $stdout);
+            static::writelnInfo(sprintf('Dumping nodes:       %d batches of %d', ceil($nodeCount / $nodeBatchSize), $nodeBatchSize), $output, $stdout);
         }
-        fwrite($file, sprintf("// %d NODES (first %d, last %d) IN %d BATCHES\n//\n\n", $nodeCount, $minNodeId, $maxNodeId, ceil($nodeCount / $nodeBatchSize)));
+        fwrite($file, sprintf("\n// %d NODES IN %d BATCHES OF %d\n\n", $nodeCount, ceil($nodeCount / $nodeBatchSize), $nodeBatchSize));
         $fromNodeId = 0;
         $k = 0;
         while (isset($fromNodeId)) {
@@ -292,12 +323,12 @@ class Neo4jTransfer
             static::sepInfo($sepSize, $output, $stdout);
         }
         fflush($file);
-        fwrite($file, sprintf("//\n// %d RELATIONS (first %d, last %d) IN %d BATCHES\n//\n\n", $relationCount, $minRelationId, $maxRelationId, ceil($relationCount/$relationBatchSize)));
+        fwrite($file, sprintf("\n// %d RELATIONS IN %d BATCHES OF %d\n\n", $relationCount, ceil($relationCount/$relationBatchSize), $relationBatchSize));
         if ($stdout) {
             static::writelnInfo('Relations', $output, $stdout);
             static::sepInfo($sepSize, $output, $stdout);
         } else {
-            static::writelnInfo(sprintf('Dumping relations:   %d batches', ceil($relationCount/$relationBatchSize)), $output, $stdout);
+            static::writelnInfo(sprintf('Dumping relations:   %d batches of %d', ceil($relationCount/$relationBatchSize), $relationBatchSize), $output, $stdout);
         }
         $fromRelationId = 0;
         $k = 0;
@@ -338,13 +369,13 @@ class Neo4jTransfer
             static::writelnInfo(' .', $output, $stdout);
             static::sepInfo($sepSize, $output, $stdout);
         }
-        fwrite($file, "// REMOVE IMPORT LABEL AND PROPERTY FROM NODES\n");
+        fwrite($file, "\n// REMOVE IMPORT LABEL AND PROPERTY FROM NODES\n");
         fwrite($file, sprintf("MATCH (n:`%s`) REMOVE n.`%s` SET n.`%s` = NULL;\n", $importLabel, $importLabel, $importIdKey));
         if ($transactional) {
-            fwrite($file, "// COMMIT TRANSACTION\n");
+            fwrite($file, "\n// COMMIT TRANSACTION\n");
             fwrite($file, "COMMIT\n");
         }
-        fwrite($file, "// REMOVE IMPORT PROPERTY INDEX\n");
+        fwrite($file, "\n// REMOVE IMPORT PROPERTY INDEX\n");
         fwrite($file, sprintf("DROP INDEX ON :`%s`(`%s`);\n", $importLabel, $importIdKey));
         fflush($file);
     }
@@ -362,7 +393,8 @@ class Neo4jTransfer
         $sepSize = self::SEP_SIZE;
         $k = 0;
         $needBreak = false;
-        static::writelnInfo(sprintf('Target: %s@%s:%d', $target->getUsername(), $target->getHost(), $target->getPort()), $output);
+        $prevComment = false;
+        static::writelnInfo(sprintf('Target: %s:%d', $target->getHost(), $target->getPort()), $output);
         static::sepInfo($sepSize, $output);
         while (($line = fgets($file)) !== false) {
             $line = trim($line);
@@ -374,12 +406,19 @@ class Neo4jTransfer
                     static::writelnInfo('', $output);
                     $needBreak = false;
                     $k = 0;
+                    if (!$prevComment) {
+                        static::sepInfo($sepSize, $output);
+                    }
                 }
                 static::writelnInfo('>> '.substr($line, 2), $output);
+                $prevComment = true;
                 continue;
             }
             $cypher[] = $line;
             if (substr($line, -1)  === ';') {
+                if ($prevComment) {
+                    static::sepInfo($sepSize, $output);
+                }
                 $query = new Query($client, implode(' ', $cypher));
                 $query->getResultSet();
                 $cypher = array();
@@ -391,6 +430,7 @@ class Neo4jTransfer
                     static::writelnInfo('', $output);
                 }
             }
+            $prevComment = false;
         }
         if ($needBreak) {
             static::writelnInfo('', $output);
@@ -428,5 +468,186 @@ class Neo4jTransfer
             $file,
             $output
         );
+    }
+
+    protected static function findLabelsByNames($names, $labels)
+    {
+        $result = array();
+        foreach ($names as $name) {
+            if (isset($labels[$name])) {
+                $result[$name] = $labels[$name];
+            }
+        }
+        return $result;
+    }
+
+    protected static function importNodes(&$nodeIds, Client $targetClient, $resultSet)
+    {
+        $result = array();
+        $id = null;
+        $batch = array();
+        $returnIds = array();
+        foreach ($resultSet as $row) {
+            $id = $row[0]['metadata']['id'];
+            $labels = $row[0]['metadata']['labels'];
+            $properties = $row[0]['data'];
+            $colName = 'ID(_'.$id.')';
+            $returnIds[$colName] = $id;
+            $batch[] = static::makeNodeCypher($id, $labels, $properties, true);
+        }
+        $cypher = 'CREATE '.implode(',', $batch).' RETURN '.implode(',', array_keys($returnIds)).';';
+        $query = new Query($targetClient, $cypher);
+        $resultSet = $query->getResultSet();
+        $columns = static::accessProtected($resultSet, 'columns');
+        $data = static::accessProtected($resultSet, 'data');
+        foreach ($columns as $colIdx => $colName) {
+            $nodeIds[$returnIds[$colName]] = $data[0][$colIdx];
+        }
+        return array($result, isset($id) ? $id + 1 : null);
+    }
+
+    protected static function importRelations($nodeIds, Client $targetClient, $resultSet, $ignoreProperties=null)
+    {
+        $result = array();
+        $id = null;
+        $batch = new Batch($targetClient);
+        foreach ($resultSet as $row) {
+            $id = $row[0]['metadata']['id'];
+            $type = $row[0]['type'];
+            $properties = $row[0]['data'];
+            if (isset($ignoreProperties)) {
+                foreach ($properties as $key => $propertyName) {
+                    if (in_array($propertyName, $ignoreProperties)) {
+                        unset($properties[$key]);
+                    }
+                }
+            }
+            $leftNode = $targetClient->makeNode();
+            $leftNodeId = $nodeIds[static::extractIdFromUrl($row[0]['start'])];
+            $leftNode->setId($leftNodeId);
+
+            $rightNode = $targetClient->makeNode();
+            $rightNodeId = $nodeIds[static::extractIdFromUrl($row[0]['end'])];
+            $rightNode->setId($rightNodeId);
+
+            $r = $targetClient->makeRelationship($properties);
+            $r
+                ->setStartNode($leftNode)
+                ->setEndNode($rightNode)
+                ->setType($type)
+                ->setProperties($properties)
+            ;
+            $batch->save($r);
+        }
+        $batch->commit();
+        return array($result, isset($id) ? $id + 1 : null);
+    }
+
+    protected static function getLabelsByName(Client $client)
+    {
+        $labelsByName = array();
+        /** @var Label[] $labels */
+        $labels = $client->getLabels();
+        foreach ($labels as $label) {
+            $labelsByName[$label->getName()] = $label;
+        }
+        return $labelsByName;
+    }
+
+    public static function directTransfer(Neo4jConnection $source, Neo4jConnection $target, $readBatchSize,
+                                          $nodeBatchSize, $relationBatchSize, $ignoredRelationProperties=null,
+                                          OutputInterface $output=null)
+    {
+        $sepSize = self::SEP_SIZE;
+
+        $sourceClient = $source->makeClient();
+
+        static::writelnInfo(sprintf('Reading from:        %s:%d', $source->getHost(), $source->getPort()), $output);
+        static::sepInfo($sepSize, $output);
+        static::writelnInfo(sprintf('Read batch size:     %d', $readBatchSize), $output);
+        list($nodeCount, $minNodeId, $maxNodeId) = static::readNodeStats($sourceClient);
+        static::writelnInfo(sprintf('Number of nodes:     %d [%d->%d]', $nodeCount, $minNodeId, $maxNodeId), $output);
+        list($relationCount, $minRelationId, $maxRelationId) = static::readRelationStats($sourceClient);
+        static::writelnInfo(sprintf('Number of relations: %d [%d->%d]', $relationCount, $minRelationId, $maxRelationId), $output);
+        static::sepInfo($sepSize, $output);
+
+        $targetClient = $target->makeClient();
+        static::writelnInfo(sprintf('Writing to:          %s:%d', $target->getHost(), $target->getPort()), $output);
+        static::sepInfo($sepSize, $output);
+        static::writelnInfo(sprintf('Node batch size:     %d', $nodeBatchSize), $output);
+        static::writelnInfo(sprintf('Relation batch size: %d', $relationBatchSize), $output);
+        static::sepInfo($sepSize, $output);
+        list($targetNodeCount, $targetMinNodeId, $targetMaxNodeId) = static::readNodeStats($targetClient);
+        static::writelnInfo(sprintf('Removing nodes:      %d [%d->%d]', $targetNodeCount, $targetMinNodeId, $targetMaxNodeId), $output);
+        $targetClient->executeCypherQuery(new Query($targetClient, self::CYPHER_REMOVE_ALL_RELATIONS));
+        static::sepInfo($sepSize, $output);
+        list($targetRelationCount, $targetMinRelationId, $targetMaxRelationId) = static::readRelationStats($targetClient);
+        static::writelnInfo(sprintf('Removing relations:  %d [%d->%d]', $targetRelationCount, $targetMinRelationId, $targetMaxRelationId), $output);
+        $targetClient->executeCypherQuery(new Query($targetClient, self::CYPHER_REMOVE_ALL_NODES));
+        static::sepInfo($sepSize, $output);
+
+        $nodeIds = array();
+
+        static::writelnInfo(sprintf('Node transfer:       %d (%d batches of %d)', $nodeCount, ceil($nodeCount / $nodeBatchSize), $nodeBatchSize), $output);
+        static::sepInfo($sepSize, $output);
+        $fromNodeId = 0;
+        $k = 0;
+        while (isset($fromNodeId)) {
+            static::writeInfo('*', $output);
+            $k++;
+            if ($k >= $sepSize) {
+                $k = 0;
+                static::writelnInfo('', $output);
+            }
+            $resultSet = static::readNodes($sourceClient, $readBatchSize, $maxNodeId, $fromNodeId);
+            if (empty($resultSet)) {
+                break;
+            }
+            $i = 0;
+            while ($i < count($resultSet)) {
+                $batch = array_slice($resultSet, $i, $nodeBatchSize);
+                list($nodes, $fromNodeId) = static::importNodes($nodeIds, $targetClient, $batch);
+                static::writeInfo('-', $output);
+                $k++;
+                if ($k >= $sepSize) {
+                    $k = 0;
+                    static::writelnInfo('', $output);
+                }
+                $i += $nodeBatchSize;
+            }
+        }
+        static::writelnInfo(' .', $output);
+        static::sepInfo($sepSize, $output);
+
+        static::writelnInfo(sprintf('Relation transfer:   %d (%d batches of %d)', $relationCount, ceil($relationCount / $relationBatchSize), $relationBatchSize), $output);
+        static::sepInfo($sepSize, $output);
+        $fromRelationId = 0;
+        $k = 0;
+        while (isset($fromRelationId)) {
+            static::writeInfo('*', $output);
+            $k++;
+            if ($k >= $sepSize) {
+                $k = 0;
+                static::writelnInfo('', $output);
+            }
+            $resultSet = static::readRelations($sourceClient, $readBatchSize, $maxRelationId, $fromRelationId);
+            if (empty($resultSet)) {
+                break;
+            }
+            $i = 0;
+            while ($i < count($resultSet)) {
+                $batch = array_slice($resultSet, $i, $relationBatchSize);
+                list($relations, $fromRelationId) = static::importRelations($nodeIds, $targetClient, $batch, $ignoredRelationProperties);
+                static::writeInfo('-', $output);
+                $k++;
+                if ($k >= $sepSize) {
+                    $k = 0;
+                    static::writelnInfo('', $output);
+                }
+                $i += $relationBatchSize;
+            }
+        }
+        static::writelnInfo(' .', $output);
+        static::sepInfo($sepSize, $output);
     }
 }

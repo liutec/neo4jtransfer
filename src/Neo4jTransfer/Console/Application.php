@@ -5,6 +5,7 @@ namespace Neo4jTransfer\Console;
 use Neo4jTransfer\Command\DumpCommand;
 use Neo4jTransfer\Command\ImportCommand;
 use Neo4jTransfer\Command\TransferCommand;
+use Neo4jTransfer\Command\DirectTransferCommand;
 use Symfony\Component\Console\Application as ConsoleApplication;
 use Neo4jTransfer\Neo4jTransfer;
 use Symfony\Component\Console\Input\InputInterface;
@@ -26,6 +27,7 @@ class Application extends ConsoleApplication
         $commands[] = new DumpCommand();
         $commands[] = new ImportCommand();
         $commands[] = new TransferCommand();
+        $commands[] = new DirectTransferCommand();
         return $commands;
     }
 

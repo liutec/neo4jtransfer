@@ -70,15 +70,15 @@ class DumpCommand extends BaseCommand
         return $file;
     }
     
-    public static function makeReadArguments(InputInterface $input)
+    public static function makeReadArguments(InputInterface $input, $readBatchSize=300, $nodeBatchSize=150, $relationBatchSize=25)
     {
         $args = $input->getOptions();
         $source = static::makeSourceConnection($args);
         $importLabel = Neo4jTransfer::getWithDefault($args, 'import-label', '_ilb');
         $importIdKey = Neo4jTransfer::getWithDefault($args, 'import-id-key', '_iid');
-        $readBatchSize = intval(Neo4jTransfer::getWithDefault($args, 'read-batch-size', 300));
-        $nodeBatchSize = intval(Neo4jTransfer::getWithDefault($args, 'node-batch-size', 150));
-        $relationBatchSize = intval(Neo4jTransfer::getWithDefault($args, 'relation-batch-size', 25));
+        $readBatchSize = intval(Neo4jTransfer::getWithDefault($args, 'read-batch-size', $readBatchSize));
+        $nodeBatchSize = intval(Neo4jTransfer::getWithDefault($args, 'node-batch-size', $nodeBatchSize));
+        $relationBatchSize = intval(Neo4jTransfer::getWithDefault($args, 'relation-batch-size', $relationBatchSize));
         $clean = Neo4jTransfer::getWithDefault($args, 'clean', true);
         $transactional = Neo4jTransfer::getWithDefault($args, 'transactional', false);
         $ignoredRelationProperties = Neo4jTransfer::getWithDefault($args, 'ignore-relation-properties', '');
