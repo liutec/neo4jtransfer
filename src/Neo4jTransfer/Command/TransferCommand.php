@@ -40,7 +40,7 @@ class TransferCommand extends BaseCommand
             ) = DumpCommand::makeReadArguments($input);
         list($target) = ImportCommand::makeWriteArguments($input);
         if (isset($file)) {
-            $file = fopen($file, 'rw+');
+            $file = fopen($file, 'w+');
         }
         Neo4jTransfer::transfer($source, $target, $importLabel, $importIdKey, $readBatchSize, $nodeBatchSize,
             $relationBatchSize, $clean, $transactional, $ignoredRelationProperties, $file, $output);
