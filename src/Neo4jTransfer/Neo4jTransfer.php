@@ -579,11 +579,11 @@ class Neo4jTransfer
         static::sepInfo($sepSize, $output);
         list($targetRelationCount, $targetMinRelationId, $targetMaxRelationId) = static::readRelationStats($targetClient);
         static::writelnInfo(sprintf('Removing relations:  %d [%d->%d]', $targetRelationCount, $targetMinRelationId, $targetMaxRelationId), $output);
-        $targetClient->executeCypherQuery(new Query($targetClient, self::CYPHER_REMOVE_ALL_NODES));
+        $targetClient->executeCypherQuery(new Query($targetClient, self::CYPHER_REMOVE_ALL_RELATIONS));
         static::sepInfo($sepSize, $output);
         list($targetNodeCount, $targetMinNodeId, $targetMaxNodeId) = static::readNodeStats($targetClient);
         static::writelnInfo(sprintf('Removing nodes:      %d [%d->%d]', $targetNodeCount, $targetMinNodeId, $targetMaxNodeId), $output);
-        $targetClient->executeCypherQuery(new Query($targetClient, self::CYPHER_REMOVE_ALL_RELATIONS));
+        $targetClient->executeCypherQuery(new Query($targetClient, self::CYPHER_REMOVE_ALL_NODES));
         static::sepInfo($sepSize, $output);
 
         $nodeIds = array();
