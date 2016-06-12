@@ -1,0 +1,13 @@
+#!/usr/bin/php -d phar.readonly=false
+<?php
+require __DIR__.'/../src/bootstrap.php';
+use Neo4jTransfer\Builder;
+error_reporting(-1);
+ini_set('display_errors', 1);
+try {
+    $builder = new Builder();
+    $builder->build();
+} catch (\Exception $e) {
+    echo 'Failed to build phar: ['.get_class($e).'] '.$e->getMessage().' at '.$e->getFile().':'.$e->getLine();
+    exit(1);
+}
