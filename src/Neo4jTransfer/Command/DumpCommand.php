@@ -35,6 +35,7 @@ class DumpCommand extends BaseCommand
         $command->addOption('read-batch-size', null, InputArgument::OPTIONAL, 'Read batch size for nodes and relations.');
         $command->addOption('node-batch-size', null, InputArgument::OPTIONAL, 'Write batch size for nodes.');
         $command->addOption('relation-batch-size', null, InputArgument::OPTIONAL, 'Write batch size for relations.');
+        $command->addOption('ignore-relation-properties', null, InputArgument::OPTIONAL, 'Comma separated values of properties to be ignored on relations.');
     }
     
     public static function configureOutputOptions(BaseCommand $command)
@@ -44,7 +45,6 @@ class DumpCommand extends BaseCommand
         $command->addOption('import-label', null, InputArgument::OPTIONAL, 'The name of the label set on imported nodes.');
         $command->addOption('import-id-key', null, InputArgument::OPTIONAL, 'The name of the key used to hold the node IDs as imported.');
         $command->addOption('transactional', null, InputArgument::OPTIONAL, 'If true, wrap import in a transaction.');
-        $command->addOption('ignore-relation-properties', null, InputArgument::OPTIONAL, 'Comma separated values of properties to be ignored on relations.');
     }
 
     public static function makeSourceConnection($args)
