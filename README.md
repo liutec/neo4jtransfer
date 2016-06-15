@@ -125,7 +125,7 @@ The following command will transfer all nodes and relations from `neo4j1-prod` i
 ./neo4jtransfer.phar transfer --output=default --source-host=neo4j1-prod --target-host=app1-dev
 ```
 
-#### Direct transfer command arguments
+#### Transfer command arguments
 
 | Argument                       | Default value | Description                                                                                                                      |
 |--------------------------------|---------------|----------------------------------------------------------------------------------------------------------------------------------|
