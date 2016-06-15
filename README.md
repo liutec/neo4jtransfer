@@ -10,6 +10,7 @@ This tool may be built as a stand-alone phar file by using the following command
 ```
 git clone https://github.com/liutec/neo4jtransfer.git
 cd neo4jtransfer
+composer install
 ./bin/build
 ./neo4jtransfer.phar help
 ```
