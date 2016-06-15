@@ -37,7 +37,7 @@ class TransferCommand extends BaseCommand
     {
         list(
             $source, $importLabel, $importIdKey, $readBatchSize, $nodeBatchSize, $relationBatchSize, $file, $clean,
-            $transactional, $ignoredRelationProperties
+            $transactional, $ignoredRelationProperties, $preserveIds
             ) = DumpCommand::makeReadArguments($input);
         list($target) = ImportCommand::makeWriteArguments($input);
         if ((!isset($file)) || ($file == 'default')) {
@@ -47,7 +47,7 @@ class TransferCommand extends BaseCommand
             $file = fopen($file, 'w+');
         }
         Neo4jTransfer::transfer($source, $target, $importLabel, $importIdKey, $readBatchSize, $nodeBatchSize,
-            $relationBatchSize, $clean, $transactional, $ignoredRelationProperties, $file, $output);
+            $relationBatchSize, $clean, $transactional, $ignoredRelationProperties, $preserveIds, $file, $output);
         if (isset($file)) {
             fclose($file);
         }

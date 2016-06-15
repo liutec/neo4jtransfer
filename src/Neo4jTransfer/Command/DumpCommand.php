@@ -5,6 +5,7 @@ namespace Neo4jTransfer\Command;
 use Neo4jTransfer\Neo4jConnection;
 use Neo4jTransfer\Neo4jTransfer;
 use Symfony\Component\Console\Command\Command as BaseCommand;
+use Symfony\Component\Console\Exception\InvalidArgumentException;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -28,23 +29,24 @@ class DumpCommand extends BaseCommand
 
     public static function configureSourceConnectionOptions(BaseCommand $command)
     {
-        $command->addOption('source-host', null, InputArgument::OPTIONAL, 'Neo4j Source Hostname.');
-        $command->addOption('source-port', null, InputArgument::OPTIONAL, 'Neo4j Source Port.');
-        $command->addOption('source-user', null, InputArgument::OPTIONAL, 'Neo4j Source Username.');
-        $command->addOption('source-password', null, InputArgument::OPTIONAL, 'Neo4j Password.');
-        $command->addOption('read-batch-size', null, InputArgument::OPTIONAL, 'Read batch size for nodes and relations.');
-        $command->addOption('node-batch-size', null, InputArgument::OPTIONAL, 'Write batch size for nodes.');
-        $command->addOption('relation-batch-size', null, InputArgument::OPTIONAL, 'Write batch size for relations.');
-        $command->addOption('ignore-relation-properties', null, InputArgument::OPTIONAL, 'Comma separated values of properties to be ignored on relations.');
+        $command->addOption('source-host', null, InputArgument::OPTIONAL, 'Neo4j source server hostname.');
+        $command->addOption('source-port', null, InputArgument::OPTIONAL, 'Neo4j source server port.');
+        $command->addOption('source-user', null, InputArgument::OPTIONAL, 'Neo4j source server username.');
+        $command->addOption('source-password', null, InputArgument::OPTIONAL, 'Neo4j source server password.');
+        $command->addOption('read-batch-size', null, InputArgument::OPTIONAL, 'The number of nodes and relations to read at once.');
+        $command->addOption('node-batch-size', null, InputArgument::OPTIONAL, 'The number of nodes to write as part of a single cypher query or batch.');
+        $command->addOption('relation-batch-size', null, InputArgument::OPTIONAL, 'The number of relations to write as part of a single cypher query or batch.');
+        $command->addOption('ignore-relation-properties', null, InputArgument::OPTIONAL, 'Comma separated values of properties to be ignored for relations. (eg. creationDate,modificationDate)');
+        $command->addOption('preserve-ids', null, InputArgument::OPTIONAL, 'Comma separated list of label attributes to treat as Node IDs. (eg. Job.ownerId,Action.userId)');
     }
     
     public static function configureOutputOptions(BaseCommand $command)
     {
-        $command->addOption('output', null, InputArgument::OPTIONAL, 'Output filename (set to \'default\' to use dump-[source-host]-[timestamp].cypher)');
-        $command->addOption('clean', null, InputArgument::OPTIONAL, 'Clean target database before importing.');
-        $command->addOption('import-label', null, InputArgument::OPTIONAL, 'The name of the label set on imported nodes.');
-        $command->addOption('import-id-key', null, InputArgument::OPTIONAL, 'The name of the key used to hold the node IDs as imported.');
-        $command->addOption('transactional', null, InputArgument::OPTIONAL, 'If true, wrap import in a transaction.');
+        $command->addOption('output', null, InputArgument::OPTIONAL, 'Cypher output filename. If unspecified, will use STDOUT. Set to \'default\' to use dump-[source-host]-[yyyyMMdd]-[hhmmss].cypher');
+        $command->addOption('clean', null, InputArgument::OPTIONAL, 'Set to false not to clean target database before importing. By default all nodes and relations will be removed.');
+        $command->addOption('import-label', null, InputArgument::OPTIONAL, 'The name of the label set on imported nodes to create a temporary index with which to quicker identify nodes when transferring relations. This label and the index on it will be removed after the import.');
+        $command->addOption('import-id-key', null, InputArgument::OPTIONAL, 'The name of the key used to hold the node IDs as imported. This attribute and the index on it will be removed after the import.');
+        $command->addOption('transactional', null, InputArgument::OPTIONAL, 'Set to true to wrap all cyphers in a transaction. Non-transactional by default.');
     }
 
     public static function makeSourceConnection($args)
@@ -70,6 +72,29 @@ class DumpCommand extends BaseCommand
         return $file;
     }
     
+    protected static function parseLabelAttributes($str)
+    {
+        $labelAttributes = array();
+        $strParts = explode(',', $str);
+        foreach ($strParts as $labelAttrStr) {
+            $labelAttrParts = explode('.', $labelAttrStr);
+            if (count($labelAttrParts) != 2) {
+                throw new InvalidArgumentException(
+                    sprintf(
+                        'Invalid label attribute "%s" in "%s".',
+                        $labelAttrStr,
+                        $str
+                    )  
+                );
+            }
+            if (!isset($labelAttributes[$labelAttrParts[0]])) {
+                $labelAttributes[$labelAttrParts[0]] = array();
+            }
+            $labelAttributes[$labelAttrParts[0]][$labelAttrParts[1]] = $labelAttrParts[1];
+        }
+        return $labelAttributes;
+    }
+    
     public static function makeReadArguments(InputInterface $input, $readBatchSize=300, $nodeBatchSize=150, $relationBatchSize=25)
     {
         $args = $input->getOptions();
@@ -79,13 +104,15 @@ class DumpCommand extends BaseCommand
         $readBatchSize = intval(Neo4jTransfer::getWithDefault($args, 'read-batch-size', $readBatchSize));
         $nodeBatchSize = intval(Neo4jTransfer::getWithDefault($args, 'node-batch-size', $nodeBatchSize));
         $relationBatchSize = intval(Neo4jTransfer::getWithDefault($args, 'relation-batch-size', $relationBatchSize));
-        $clean = Neo4jTransfer::getWithDefault($args, 'clean', true);
-        $transactional = Neo4jTransfer::getWithDefault($args, 'transactional', false);
+        $clean = Neo4jTransfer::getWithDefault($args, 'clean', 'true') === 'true';
+        $transactional = Neo4jTransfer::getWithDefault($args, 'transactional', 'false') === 'true';
         $ignoredRelationProperties = Neo4jTransfer::getWithDefault($args, 'ignore-relation-properties', '');
         $ignoredRelationProperties = explode(',', $ignoredRelationProperties);
+        $preserveIdsStr = Neo4jTransfer::getWithDefault($args, 'preserve-ids', '');
+        $preserveIds = static::parseLabelAttributes($preserveIdsStr);
         $file = Neo4jTransfer::getWithDefault($args, 'output', null);
         return array($source, $importLabel, $importIdKey, $readBatchSize, $nodeBatchSize, $relationBatchSize, $file, 
-            $clean, $transactional, $ignoredRelationProperties);
+            $clean, $transactional, $ignoredRelationProperties, $preserveIds);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output)
@@ -95,9 +122,10 @@ class DumpCommand extends BaseCommand
     
     public static function executeDump(InputInterface $input, OutputInterface $output)
     {
+        /** @var Neo4jConnection $source */
         list(
             $source, $importLabel, $importIdKey, $readBatchSize, $nodeBatchSize, $relationBatchSize, $file, $clean, 
-            $transactional, $ignoredRelationProperties
+            $transactional, $ignoredRelationProperties, $preserveIds
             ) = static::makeReadArguments($input);
         if (isset($file) && ($file == 'default')) {
             $file = static::makeDumpFileName($source->getHost(), $output);
@@ -106,7 +134,7 @@ class DumpCommand extends BaseCommand
             $file = fopen($file, 'w+');
         }
         Neo4jTransfer::dump($source, $importLabel, $importIdKey, $readBatchSize, $nodeBatchSize, $relationBatchSize, 
-            $clean, $transactional, $ignoredRelationProperties, $file, $output);
+            $clean, $transactional, $ignoredRelationProperties, $preserveIds, $file, $output);
         if (isset($file)) {
             fclose($file);
         }

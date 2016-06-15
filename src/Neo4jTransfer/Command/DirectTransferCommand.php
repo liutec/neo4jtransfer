@@ -23,10 +23,10 @@ class DirectTransferCommand extends BaseCommand
     {
         list(
             $source, $importLabel, $importIdKey, $readBatchSize, $nodeBatchSize, $relationBatchSize, $file, $clean,
-            $transactional, $ignoredRelationProperties
+            $transactional, $ignoredRelationProperties, $preserveIds
             ) = DumpCommand::makeReadArguments($input, 300, 100, 150);
         list($target) = ImportCommand::makeWriteArguments($input);
         Neo4jTransfer::directTransfer($source, $target, $readBatchSize, $nodeBatchSize,
-            $relationBatchSize, $ignoredRelationProperties, $output);
+            $relationBatchSize, $ignoredRelationProperties, $preserveIds, $output);
     }
 }

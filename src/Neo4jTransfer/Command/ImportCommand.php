@@ -25,15 +25,15 @@ class ImportCommand extends BaseCommand
         ;
 
         static::configureTargetConnectionOptions($command);
-        $command->addOption('input', null, InputArgument::OPTIONAL, 'Input filename (set to \'last:[hostname]\' to use dump-[hostname]-[latest timestamp].cypher)');
+        $command->addOption('input', null, InputArgument::OPTIONAL, 'Cypher input filename. If unspecified, will use STDIN. Set to last:[hostname] to use dump-[hostname]-[yyyyMMdd]-[hhmmss].cypher with the latest timestamp.');
     }
     
     public static function configureTargetConnectionOptions(BaseCommand $command)
     {
-        $command->addOption('target-host', null, InputArgument::OPTIONAL, 'Neo4j Source Hostname');
-        $command->addOption('target-port', null, InputArgument::OPTIONAL, 'Neo4j Source Port');
-        $command->addOption('target-user', null, InputArgument::OPTIONAL, 'Neo4j Source Username');
-        $command->addOption('target-password', null, InputArgument::OPTIONAL, 'Neo4j Password');
+        $command->addOption('target-host', null, InputArgument::OPTIONAL, 'Neo4j source server hostname');
+        $command->addOption('target-port', null, InputArgument::OPTIONAL, 'Neo4j source server port');
+        $command->addOption('target-user', null, InputArgument::OPTIONAL, 'Neo4j source server username');
+        $command->addOption('target-password', null, InputArgument::OPTIONAL, 'Neo4j source server password');
     }
     
     public static function makeTargetConnection($args)

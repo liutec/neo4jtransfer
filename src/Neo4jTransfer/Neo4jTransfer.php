@@ -250,7 +250,7 @@ class Neo4jTransfer
 
     public static function dump(Neo4jConnection $source, $importLabel, $importIdKey, $readBatchSize,
                                            $nodeBatchSize, $relationBatchSize, $clean=true, $transactional=false,
-                                           $ignoredRelationProperties=null, $file=null, OutputInterface $output=null)
+                                           $ignoredRelationProperties=null, $preserveIds=null, $file=null, OutputInterface $output=null)
     {
         if (isset($file)) {
             $stdout = false;
@@ -286,7 +286,7 @@ class Neo4jTransfer
         } else {
             static::writelnInfo(sprintf('Dumping nodes:       %d batches of %d', ceil($nodeCount / $nodeBatchSize), $nodeBatchSize), $output, $stdout);
         }
-        fwrite($file, sprintf("\n// %d NODES IN %d BATCHES OF %d\n\n", $nodeCount, ceil($nodeCount / $nodeBatchSize), $nodeBatchSize));
+        fwrite($file, sprintf("\n// CREATE %d NODES IN %d BATCHES OF %d\n\n", $nodeCount, ceil($nodeCount / $nodeBatchSize), $nodeBatchSize));
         $fromNodeId = 0;
         $k = 0;
         while (isset($fromNodeId)) {
@@ -322,8 +322,27 @@ class Neo4jTransfer
             static::writelnInfo(' .', $output, $stdout);
             static::sepInfo($sepSize, $output, $stdout);
         }
+        if (!empty($preserveIds)) {
+            fwrite($file, sprintf("\n// UPDATE ATTRIBUTES THAT REFER TO NODE IDs\n\n", $relationCount, ceil($relationCount/$relationBatchSize), $relationBatchSize));
+            foreach ($preserveIds as $nodeLabel => $labelAttributes) {
+                foreach ($labelAttributes as $labelAttribute) {
+                    fwrite(
+                        $file,
+                        sprintf(
+                            "MATCH (o:`%s`:`%s`), (n:`%s`) WHERE n.`%s`=o.`%s` SET o.`%s`=ID(n);\n",
+                            $importLabel,
+                            $nodeLabel,
+                            $importLabel,
+                            $importIdKey,
+                            $labelAttribute,
+                            $labelAttribute
+                        )
+                    );
+                }
+            }
+        }
         fflush($file);
-        fwrite($file, sprintf("\n// %d RELATIONS IN %d BATCHES OF %d\n\n", $relationCount, ceil($relationCount/$relationBatchSize), $relationBatchSize));
+        fwrite($file, sprintf("\n// CREATE %d RELATIONS IN %d BATCHES OF %d\n\n", $relationCount, ceil($relationCount/$relationBatchSize), $relationBatchSize));
         if ($stdout) {
             static::writelnInfo('Relations', $output, $stdout);
             static::sepInfo($sepSize, $output, $stdout);
@@ -447,7 +466,7 @@ class Neo4jTransfer
     
     public static function transfer(Neo4jConnection $source, Neo4jConnection $target, $importLabel, $importIdKey,
                                     $readBatchSize, $nodeBatchSize, $relationBatchSize, $clean, $transactional,
-                                    $ignoredRelationProperties=null, $file=null, OutputInterface $output=null)
+                                    $ignoredRelationProperties=null, $preserveIds=null, $file=null, OutputInterface $output=null)
     {
         static::dump(
             $source,
@@ -459,6 +478,7 @@ class Neo4jTransfer
             $clean,
             $transactional,
             $ignoredRelationProperties,
+            $preserveIds,
             $file,
             $output
         );
@@ -481,7 +501,7 @@ class Neo4jTransfer
         return $result;
     }
 
-    protected static function importNodes(&$nodeIds, Client $targetClient, $resultSet)
+    protected static function importNodes(&$nodeIds, Client $targetClient, $resultSet, &$nodesWithAttributesReferringToIds, $preserveIds)
     {
         $result = array();
         $id = null;
@@ -494,6 +514,24 @@ class Neo4jTransfer
             $colName = 'ID(_'.$id.')';
             $returnIds[$colName] = $id;
             $batch[] = static::makeNodeCypher($id, $labels, $properties, true);
+            if (!isset($preserveIds)) {
+                continue;
+            }
+            foreach ($preserveIds as $nodeLabel => $labelAttributes) {
+                if (!in_array($nodeLabel, $labels)) {
+                    continue;
+                }
+                $attributes = array_intersect_key($labelAttributes, $properties);
+                if (empty($attributes)) {
+                    continue;
+                }
+                foreach ($attributes as $attribute) {
+                    if (!isset($nodesWithAttributesReferringToIds[$id])) {
+                        $nodesWithAttributesReferringToIds[$id] = array();
+                    }
+                    $nodesWithAttributesReferringToIds[$id][$attribute] = intval($properties[$attribute]);
+                }
+            }
         }
         $cypher = 'CREATE '.implode(',', $batch).' RETURN '.implode(',', array_keys($returnIds)).';';
         $query = new Query($targetClient, $cypher);
@@ -556,7 +594,7 @@ class Neo4jTransfer
 
     public static function directTransfer(Neo4jConnection $source, Neo4jConnection $target, $readBatchSize,
                                           $nodeBatchSize, $relationBatchSize, $ignoredRelationProperties=null,
-                                          OutputInterface $output=null)
+                                          $preserveIds=null, OutputInterface $output=null)
     {
         $sepSize = self::SEP_SIZE;
 
@@ -592,6 +630,7 @@ class Neo4jTransfer
         static::sepInfo($sepSize, $output);
         $fromNodeId = 0;
         $k = 0;
+        $nodesWithAttributesReferringToIds = array();
         while (isset($fromNodeId)) {
             static::writeInfo('*', $output);
             $k++;
@@ -606,7 +645,7 @@ class Neo4jTransfer
             $i = 0;
             while ($i < count($resultSet)) {
                 $batch = array_slice($resultSet, $i, $nodeBatchSize);
-                list($nodes, $fromNodeId) = static::importNodes($nodeIds, $targetClient, $batch);
+                list($nodes, $fromNodeId) = static::importNodes($nodeIds, $targetClient, $batch, $nodesWithAttributesReferringToIds, $preserveIds);
                 static::writeInfo('-', $output);
                 $k++;
                 if ($k >= $sepSize) {
@@ -618,6 +657,23 @@ class Neo4jTransfer
         }
         static::writelnInfo(' .', $output);
         static::sepInfo($sepSize, $output);
+        if (empty($nodesWithAttributesReferringToIds)) {
+            static::writelnInfo('No node(s) with attributes that refer to node IDs.', $output);
+        } else {
+            static::writelnInfo(sprintf('Updating %d node(s) with node IDs attributes', count($nodesWithAttributesReferringToIds)), $output);
+        }
+        static::sepInfo($sepSize, $output);
+        $batch = new Batch($targetClient);
+        foreach ($nodesWithAttributesReferringToIds as $oldNodeId => $attributesReferringToIds) {
+            $newNodeId = $nodeIds[$oldNodeId];
+            $n = $targetClient->getNode($newNodeId);
+            foreach ($attributesReferringToIds as $attributeName => $oldId) {
+                $newId = isset($nodeIds[$oldId]) ? $nodeIds[$oldId] : null;
+                $n->setProperty($attributeName, $newId);
+            }
+            $batch->save($n);
+        }
+        $batch->commit();
 
         static::writelnInfo(sprintf('Relation transfer:   %d (%d batches of %d)', $relationCount, ceil($relationCount / $relationBatchSize), $relationBatchSize), $output);
         static::sepInfo($sepSize, $output);
