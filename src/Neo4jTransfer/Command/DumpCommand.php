@@ -74,6 +74,9 @@ class DumpCommand extends BaseCommand
     
     protected static function parseLabelAttributes($str)
     {
+        if (empty(trim($str))) {
+            return array();
+        }
         $labelAttributes = array();
         $strParts = explode(',', $str);
         foreach ($strParts as $labelAttrStr) {
