@@ -16,8 +16,7 @@ class Neo4jTransfer
     const VERSION = '@version@';
     const RELEASE_DATE = '@release_date@';
     const SEP_SIZE = 50;
-    const CYPHER_REMOVE_ALL_RELATIONS = 'MATCH ()-[r]->() DELETE r;';
-    const CYPHER_REMOVE_ALL_NODES = 'MATCH (n) DELETE n;';
+    const CYPHER_REMOVE_ALL_NODES = 'MATCH (n) DETACH DELETE n;';
 
     public static function getWithDefault($array, $key, $defaultValue = null)
     {
@@ -277,7 +276,6 @@ class Neo4jTransfer
         }
         if ($clean) {
             fwrite($file, "\n// REMOVE ALL RELATIONS AND NODES\n");
-            fwrite($file, self::CYPHER_REMOVE_ALL_RELATIONS."\n");
             fwrite($file, self::CYPHER_REMOVE_ALL_NODES."\n");
         }
         if ($stdout) {
@@ -617,8 +615,6 @@ class Neo4jTransfer
         static::sepInfo($sepSize, $output);
         list($targetRelationCount, $targetMinRelationId, $targetMaxRelationId) = static::readRelationStats($targetClient);
         static::writelnInfo(sprintf('Removing relations:  %d [%d->%d]', $targetRelationCount, $targetMinRelationId, $targetMaxRelationId), $output);
-        $targetClient->executeCypherQuery(new Query($targetClient, self::CYPHER_REMOVE_ALL_RELATIONS));
-        static::sepInfo($sepSize, $output);
         list($targetNodeCount, $targetMinNodeId, $targetMaxNodeId) = static::readNodeStats($targetClient);
         static::writelnInfo(sprintf('Removing nodes:      %d [%d->%d]', $targetNodeCount, $targetMinNodeId, $targetMaxNodeId), $output);
         $targetClient->executeCypherQuery(new Query($targetClient, self::CYPHER_REMOVE_ALL_NODES));
